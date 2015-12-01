@@ -61,7 +61,7 @@ namespace ManagementAPI
                                          {
                                              type = "Microsoft.Search/searchServices",
                                              location = "West US",
-											 sku = new { name = "standard" }, // use "standard" for standard services
+					     sku = new { name = "standard" }, // use "standard" for standard services
                                              properties = new
                                              {
                                                  partitionCount = 1,
