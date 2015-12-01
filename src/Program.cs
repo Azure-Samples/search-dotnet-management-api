@@ -61,13 +61,14 @@ namespace ManagementAPI
                                          {
                                              type = "Microsoft.Search/searchServices",
                                              location = "West US",
+											 sku = new { name = "standard" }, // use "standard" for standard services
                                              properties = new
                                              {
-                                                 sku = new { name = "free" }, // use "standard" for standard services
                                                  partitionCount = 1,
                                                  replicaCount = 1
                                              }
                                          });
+										 									 
             DumpResponse("Create new Azure Search service", response);
 
             // Retrieve service definition

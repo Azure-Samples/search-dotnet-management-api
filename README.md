@@ -15,4 +15,4 @@ Examples of programmable operations include:
 
 See Get started with Azure Search REST API http://msdn.microsoft.com/library/azure/dn798935.aspx for a walkthrough of sample code that demonstrates the API.
 
-To contact me, please visit my blog http://blog.liamcavanagh.com/ or reach out to me at Twitter http://twitter.com/liamca/
+For questions, please reach out to me at Twitter http://twitter.com/liamca/
