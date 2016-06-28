@@ -16,3 +16,7 @@ Examples of programmable operations include:
 See Get started with Azure Search REST API http://msdn.microsoft.com/library/azure/dn798935.aspx for a walkthrough of sample code that demonstrates the API.
 
 For questions, please reach out to me at Twitter http://twitter.com/liamca/
+
+---
+
+This project has adopted the [Microsoft Open Source Code of Conduct](https://opensource.microsoft.com/codeofconduct/). For more information see the [Code of Conduct FAQ](https://opensource.microsoft.com/codeofconduct/faq/) or contact [opencode@microsoft.com](mailto:opencode@microsoft.com) with any additional questions or comments.
