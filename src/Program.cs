@@ -217,7 +217,7 @@ namespace ManagementAPI
         {
             AuthenticationResult result = null;
 
-            var context = new AuthenticationContext("https://login.windows.net/" + TenantId);
+            var context = new AuthenticationContext("https://login.microsoftonline.com/" + TenantId);
 
             var thread = new Thread(() =>
             {
