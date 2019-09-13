@@ -1,7 +1,11 @@
 ---
-services: search
-platforms: dotnet
-author: liamca
+page_type: sample
+languages:
+- csharp
+products:
+- azure
+description: "The Azure Search Service Management API provides programmatic access to much of the functionality available through the Azure Search extension within the Azure Preview Management Portal."
+urlFragment: search-dotnet-management-api
 ---
 
 # Azure Search .NET Management API Demo
