@@ -16,9 +16,9 @@ using Microsoft.Rest.Azure.Authentication;
 
 namespace ManagementAPI
 {
-    // In order to use the Azure Resource Manager API you need to prepare the target subscription. This is discussed
-    // in detail here:
-    // http://msdn.microsoft.com/en-us/library/azure/dn790557.aspx
+    // The Azure Cognitive Search Management SDK authentication uses a service principal in Azure Active Directory.  Before you can run the sample, you'll need to
+    // create a service principal and give it the proper permissions in your subscription.  
+    // This is discussed in detail here: https://docs.microsoft.com/azure/active-directory/develop/howto-create-service-principal-portal
 
     class Program
     {
@@ -27,17 +27,12 @@ namespace ManagementAPI
             IConfigurationBuilder builder = new ConfigurationBuilder().AddJsonFile("appsettings.json");
             IConfigurationRoot configuration = builder.Build();
 
-            // You can obtain this information from the Azure management portal. The instructions in the link above 
-            // include details for this as well.
+            // Updated this information in the appsettings.json in this project.
+            // See the instructions at the link above for the service principal details and the subscription id.
             var tenantId = configuration["TenantId"];
             var clientId = configuration["ClientId"];
             var clientSecret = configuration["ClientSecret"];
             var subscriptionId = configuration["SubscriptionId"];
-
-            // This is the return URL you configure during AD client application setup. For this type of apps (non-web apps)
-            // you can set this to something like http://localhost/testapp. The important thing is that the URL here and the
-            // URL in AD configuration match.
-            //Uri RedirectUrl = null;
 
             if (new List<string> { tenantId, clientId, clientSecret, subscriptionId }.Any(i => String.IsNullOrEmpty(i)))
             {
@@ -51,9 +46,10 @@ namespace ManagementAPI
 
         public static async Task RunSample(string tenantId, string clientId, string clientSecret, string subscriptionId)
         {
-            // Build the service credentials and Azure Resource Manager clients
+            // Build the service credentials using the service principal.
             var creds = await ApplicationTokenProvider.LoginSilentAsync(tenantId, clientId, clientSecret);
 
+            // Create the various management clients using the credentials instantiated above.
             var subscriptionClient = new SubscriptionClient(creds);
             var resourceClient = new ResourceManagementClient(creds);
             resourceClient.SubscriptionId = subscriptionId;
@@ -69,13 +65,12 @@ namespace ManagementAPI
             // Register the Azure Search resource provider with the subscription. In the Azure Resource Manager model, you need
             // to register a resource provider in a subscription before you can use it. 
             // You only need to do this once per subscription/per resource provider.
-            // More details here:
-            // http://msdn.microsoft.com/en-us/library/azure/dn790548.aspx
+            // More details on registering a resource provider here: https://docs.microsoft.com/rest/api/resources/Providers/Register
             var provider = resourceClient.Providers.Register("Microsoft.Search");
             DisplayProviderDetails(provider);
 
-            // List all search services in the subscription by resource group.  How to list resource groups is detailed here:
-            // http://msdn.microsoft.com/en-us/library/azure/dn790529.aspx4
+            // List all search services in the subscription by resource group.  
+            // More details on listing resources here: https://docs.microsoft.com/rest/api/resources/resources/list
             var groups = await resourceClient.ResourceGroups.ListAsync();
 
             Console.WriteLine("----------------------------------------------------");
@@ -86,7 +81,7 @@ namespace ManagementAPI
             {
                 var resources = await resourceClient.Resources.ListAsync("resourceGroup eq '" + group.Name + "' and resourceType eq 'Microsoft.Search/searchServices'");
                 if (resources.Count() > 0)
-                Console.WriteLine("resourceGroup: {0}", group.Name);
+                    Console.WriteLine("resourceGroup: {0}", group.Name);
                 {
                     foreach (var resource in resources)
                     {
@@ -96,18 +91,19 @@ namespace ManagementAPI
             }
             Console.WriteLine();
 
-            // Create a new free search service called "sample#" (# is a random number, to make it less likely to have collisions)
-            // NOTE: if you already have a free service in this subscription this operation will fail
+            // Create a new search service called "sampleservice#" (where # is a random number, to make it less likely to have collisions)
             string newServiceName = "sampleservice" + _random.Next(0, 1000000).ToString();
             string newGroupName = "samplegroup" + _random.Next(0, 1000000).ToString();
             await resourceClient.ResourceGroups.CreateOrUpdateAsync(newGroupName, new ResourceGroup { Location = "West US" });
 
-            var newService = await searchClient.Services.CreateOrUpdateAsync(newGroupName, newServiceName, 
-                new SearchService(){
-                Location = "West US",
-                Sku = new Sku() { Name = SkuName.Standard }, // use "standard" for standard services
-                PartitionCount = 1,
-                ReplicaCount = 1
+            // PLEASE NOTE: By default, the code below will create a Standard (S1) search service which is a paid service tier.
+            // You can change this to the free service tier, but if you already have a free service in this subscription the operation will fail.
+            var newService = await searchClient.Services.CreateOrUpdateAsync(newGroupName, newServiceName,
+                new SearchService() {
+                    Location = "West US",
+                    Sku = new Sku() { Name = SkuName.Standard }, // use "standard" for standard services
+                    PartitionCount = 1,
+                    ReplicaCount = 1
                 });
 
             // Wait for service provisioning to complete
@@ -167,46 +163,49 @@ namespace ManagementAPI
             Console.WriteLine("Deleted query API key by name");
             Console.WriteLine("----------------------------------------------------");
             Console.WriteLine();
-
-            // Scale up service to 2 partitions and 2 replicas
-            // NOTE: this will fail unless you change the service creation code above to make it a "standard" service and wait until it's provisioned
-            newService = searchClient.Services.Update(newGroupName, newService.Name, new SearchService() { ReplicaCount = 2, PartitionCount = 2 });
-
-            // Wait for provisioning to complete
-            while (newService.ProvisioningState == ProvisioningState.Provisioning)
+               
+            // NOTE: This operation will fail for the free service tier.
+            if (newService.Sku.Name != SkuName.Free)
             {
-                Thread.Sleep(TimeSpan.FromSeconds(10));
+                // Scale up service to 2 replicas.  This operation will take several minutes to complete.
+                newService = searchClient.Services.Update(newGroupName, newService.Name, new SearchService() { ReplicaCount = 2 });
 
-                // Retrieve service definition by ResourceGroup name and Service Name
-                newService = await searchClient.Services.GetAsync(newGroupName, newService.Name);
+                // Wait for provisioning to complete
+                while (newService.ProvisioningState == ProvisioningState.Provisioning)
+                {
+                    Thread.Sleep(TimeSpan.FromSeconds(10));
+
+                    // Retrieve service definition by ResourceGroup name and Service Name
+                    newService = await searchClient.Services.GetAsync(newGroupName, newService.Name);
+                }
+
+                Console.WriteLine("----------------------------------------------------");
+                Console.WriteLine("Scale up service to 2 replicas");
+                Console.WriteLine("----------------------------------------------------");
+                Console.WriteLine("Partition Count: {0}", newService.PartitionCount);
+                Console.WriteLine("Replica Count: {0}", newService.ReplicaCount);
+                Console.WriteLine();
+
+                // Scale back down to 1 replica x 1 partition
+                newService = searchClient.Services.Update(newGroupName, newService.Name, new SearchService() { ReplicaCount = 1, PartitionCount = 1 });
+
+                // Wait for provisioning to complete
+                while (newService.ProvisioningState == ProvisioningState.Provisioning)
+                {
+                    Thread.Sleep(TimeSpan.FromSeconds(10));
+
+                    // Retrieve service definition by ResourceGroup name and Service Name
+                    newService = await searchClient.Services.GetAsync(newGroupName, newService.Name);
+                }
+
+                Console.WriteLine("----------------------------------------------------");
+                Console.WriteLine("Scale back down to 1 replica x 1 partition");
+                Console.WriteLine("----------------------------------------------------");
+                Console.WriteLine("Partition Count: {0}", newService.PartitionCount);
+                Console.WriteLine("Replica Count: {0}", newService.ReplicaCount);
+                Console.WriteLine();
             }
-
-            Console.WriteLine("----------------------------------------------------");
-            Console.WriteLine("Scale up service to 2 partitions and 2 replicas");
-            Console.WriteLine("----------------------------------------------------");
-            Console.WriteLine("Partition Count: {0}", newService.PartitionCount);
-            Console.WriteLine("Replica Count: {0}", newService.ReplicaCount);
-            Console.WriteLine();
-
-            // Scale back down to 1 replica x 1 partition
-            newService = searchClient.Services.Update(newGroupName, newService.Name, new SearchService() { ReplicaCount = 1, PartitionCount = 1 });
-
-            // Wait for provisioning to complete
-            while (newService.ProvisioningState == ProvisioningState.Provisioning)
-            {
-                Thread.Sleep(TimeSpan.FromSeconds(10));
-
-                // Retrieve service definition by ResourceGroup name and Service Name
-                newService = await searchClient.Services.GetAsync(newGroupName, newService.Name);
-            }
-
-            Console.WriteLine("----------------------------------------------------");
-            Console.WriteLine("Scale back down to 1 replica x 1 partition");
-            Console.WriteLine("----------------------------------------------------");
-            Console.WriteLine("Partition Count: {0}", newService.PartitionCount);
-            Console.WriteLine("Replica Count: {0}", newService.ReplicaCount);
-            Console.WriteLine();
-
+            
             // Delete search service
             await searchClient.Services.DeleteAsync(newGroupName, newService.Name);
             if (searchClient.Services.ListByResourceGroup(newGroupName).Count() == 0)
