@@ -94,7 +94,7 @@ namespace ManagementAPI
                     {
                         Location = "West US",
                         Sku = new Sku() { Name = SkuName.Standard }, // use "standard" for standard services
-                    PartitionCount = 1,
+                        PartitionCount = 1,
                         ReplicaCount = 1
                     });
 
