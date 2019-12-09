@@ -1,245 +1,256 @@
 ﻿using System;
-using System.Net.Http;
-using System.Net.Http.Headers;
-using System.Text;
+using System.Threading.Tasks;
+using System.Linq;
+using Microsoft.Extensions.Configuration;
 using System.Threading;
-using Microsoft.IdentityModel.Clients.ActiveDirectory;
-using Newtonsoft.Json;
+
+using Microsoft.Azure.Management.Search;
+using Microsoft.Azure.Management.Search.Models;
+using Microsoft.Azure.Management.ResourceManager;
+using Microsoft.Azure.Management.ResourceManager.Models;
+using Sku = Microsoft.Azure.Management.Search.Models.Sku;
+
+using Microsoft.Rest.Azure.Authentication;
 
 namespace ManagementAPI
 {
-    // In order to use the Azure Resource Manager API you need to prepare the target subscription. This is discussed
-    // in detail here:
-    // http://msdn.microsoft.com/en-us/library/azure/dn790557.aspx
+    // The Azure Cognitive Search Management SDK authentication uses a service principal in Azure Active Directory.  Before you can run the sample, you'll need to
+    // create a service principal and give it the proper permissions in your subscription.  
+    // This is discussed in detail here: https://docs.microsoft.com/azure/active-directory/develop/howto-create-service-principal-portal
 
     class Program
     {
-        // You can obtain this information from the Azure management portal. The instructions in the link above 
-        // include details for this as well.
-        private const string TenantId = "<your tenant id>";
-        private const string ClientId = "<your client id>";
-        private const string SubscriptionId = "<your subscription id>";
-
-        // This is the return URL you configure during AD client application setup. For this type of apps (non-web apps)
-        // you can set this to something like http://localhost/testapp. The important thing is that the URL here and the
-        // URL in AD configuration match.
-        private static readonly Uri RedirectUrl = new Uri("<your redirect url");
-
-        private static readonly Random _random = new Random();
-
-        private static string _authorizationToken = null;
-
-        static void Main(string[] args)
+        public static async Task Main(string[] args)
         {
-            HttpResponseMessage response;
+            IConfigurationBuilder builder = new ConfigurationBuilder().AddJsonFile("appsettings.json");
+            IConfigurationRoot configuration = builder.Build();
 
-            // Get some general subscription information, not Azure Search specific
-            response = ExecuteArmRequest(HttpMethod.Get, "?api-version=2014-04-01-Preview");
-            DumpResponse("Subscription data", response);
+            // Updated this information in the appsettings.json in this project.
+            // See the instructions at the link above for the service principal details and the subscription id.
+            var tenantId = configuration["TenantId"];
+            var clientId = configuration["ClientId"];
+            var clientSecret = configuration["ClientSecret"];
+            var subscriptionId = configuration["SubscriptionId"];
 
-            // Register the Azure Search resource provider with the subscription. In the Azure Resource Manager model, you need
-            // to register a resource provider in a subscription before you can use it. 
-            // You only need to do this once per subscription/per resource provider.
-            // More details here:
-            // http://msdn.microsoft.com/en-us/library/azure/dn790548.aspx
-            response = ExecuteArmRequest(HttpMethod.Post, "providers/Microsoft.Search/register?api-version=2014-04-01");
-            DumpResponse("Azure Search resource provider registration", response);
-
-            // List all search services in the subscription that are in a specific resource group. In this case 
-            // we use "Default-Web-WestUS", change this to whatever resource group you might have in your environment or
-            // list all resource groups first to see what's available. How to list resource groups is detailed here:
-            // http://msdn.microsoft.com/en-us/library/azure/dn790529.aspx
-            response = ExecuteArmRequest(HttpMethod.Get, "resourcegroups/Default-Web-WestUS/providers/Microsoft.Search/searchServices?api-version=2014-07-31-Preview");
-            DumpResponse("Azure Search services", response);
-
-            // Create a new free search service called "sample#" (# is a random number, to make it less likely to have collisions)
-            // NOTE: if you already have a free service in this subscription this operation will fail
-            string name = "sample" + _random.Next(0, 1000000).ToString();
-            response = ExecuteArmRequest(HttpMethod.Put,
-                                         "resourcegroups/Default-Web-WestUS/providers/Microsoft.Search/searchServices/" + name + "?api-version=2014-07-31-Preview",
-                                         new
-                                         {
-                                             type = "Microsoft.Search/searchServices",
-                                             location = "West US",
-					     sku = new { name = "standard" }, // use "standard" for standard services
-                                             properties = new
-                                             {
-                                                 partitionCount = 1,
-                                                 replicaCount = 1
-                                             }
-                                         });
-										 									 
-            DumpResponse("Create new Azure Search service", response);
-
-            // Retrieve service definition
-            response = ExecuteArmRequest(HttpMethod.Get, "resourcegroups/Default-Web-WestUS/providers/Microsoft.Search/searchServices/" + name + "?api-version=2014-07-31-Preview");
-            DumpResponse("Azure Search service definition", response);
-
-            // Retrieve service admin API keys
-            response = ExecuteArmRequest(HttpMethod.Post, "resourcegroups/Default-Web-WestUS/providers/Microsoft.Search/searchServices/" + name + "/listAdminKeys?api-version=2014-07-31-Preview");
-            DumpResponse("Azure Search service admin keys", response);
-
-            // Re-generate secondary admin API key
-            // (use /primary to regenerate the primary admin API key)
-            response = ExecuteArmRequest(HttpMethod.Post, "resourcegroups/Default-Web-WestUS/providers/Microsoft.Search/searchServices/" + name + "/regenerateAdminKey/secondary?api-version=2014-07-31-Preview");
-            DumpResponse("Re-generated Azure Search secondary admin key", response);
-
-            // Create a new query API key
-            response = ExecuteArmRequest(HttpMethod.Post, "resourcegroups/Default-Web-WestUS/providers/Microsoft.Search/searchServices/" + name + "/createQueryKey/myQueryKey?api-version=2014-07-31-Preview");
-            DumpResponse("Created new Azure Search service query key", response);
-
-            // Retrieve query API keys
-            response = ExecuteArmRequest(HttpMethod.Get, "resourcegroups/Default-Web-WestUS/providers/Microsoft.Search/searchServices/" + name + "/listQueryKeys?api-version=2014-07-31-Preview");
-            DumpResponse("List Azure Search service query keys", response);
-
-            // Delete a query API key (pick the first one)
-            string key = JsonConvert.DeserializeObject<dynamic>(response.Content.ReadAsStringAsync().Result).value[0].key;
-            response = ExecuteArmRequest(HttpMethod.Delete, "resourcegroups/Default-Web-WestUS/providers/Microsoft.Search/searchServices/" + name + "/deleteQueryKey/" + key + "?api-version=2014-07-31-Preview");
-            DumpResponse("Delete Azure Search service query key", response);
-
-            // Change service replica/partition count
-            // NOTE: this will fail unless you change the service creation code above to make it a "standard" service and wait until it's provisioned
-            response = ExecuteArmRequest(HttpMethod.Put,
-                                         "resourcegroups/Default-Web-WestUS/providers/Microsoft.Search/searchServices/" + name + "?api-version=2014-07-31-Preview",
-                                         new
-                                         {
-                                             type = "Microsoft.Search/searchServices",
-                                             location = "West US",
-                                             properties = new
-                                             {
-                                                 sku = new { name = "standard" },
-                                                 partitionCount = 1,
-                                                 replicaCount = 2
-                                             }
-                                         });
-            DumpResponse("Dynamically scale Azure Search service", response);
-
-            // Delete search service
-            response = ExecuteArmRequest(HttpMethod.Delete, "resourcegroups/Default-Web-WestUS/providers/Microsoft.Search/searchServices/" + name + "?api-version=2014-07-31-Preview");
-            DumpResponse("Delete Azure Search service", response);
-        }
-
-        private static void ProvisionAndWait()
-        {
-            // This method shows an example of a long-running operation that will need polling to determine if it's done. This same
-            // pattern applies both to provisioning of standard services and to scale-up/-down operations. 
-            // Note that provisioning of free services doesn't need this since it typically completes instantaneously.
-
-            HttpResponseMessage response;
-
-            // Create a new "standard" search service called "sample#" (# is a random number, to make it less likely to have collisions)
-            // NOTE: standard services have a cost that will be charged to the Azure account you're using to run this sample
-            string name = "sample" + _random.Next(0, 1000000).ToString();
-            response = ExecuteArmRequest(HttpMethod.Put,
-                                         "resourcegroups/Default-Web-WestUS/providers/Microsoft.Search/searchServices/" + name + "?api-version=2014-07-31-Preview",
-                                         new
-                                         {
-                                             type = "Microsoft.Search/searchServices",
-                                             location = "West US",
-                                             properties = new
-                                             {
-                                                 sku = new { name = "standard" }, // use "standard" for standard services
-                                                 partitionCount = 1,
-                                                 replicaCount = 1
-                                             }
-                                         });
-            DumpResponse("Create new Azure Search service", response);
-
-            Console.WriteLine("Waiting for provisioning operation to complete");
-            WaitForProvisioningOperation(name);
-            Console.WriteLine("Provisioning operation completed");
-        }
-
-        private static void WaitForProvisioningOperation(string serviceName)
-        {
-            string state = null;
-
-            do
+            if (new[] { tenantId, clientId, clientSecret, subscriptionId }.Any(i => i.StartsWith("[")))
             {
-                Thread.Sleep(TimeSpan.FromSeconds(30));
-                HttpResponseMessage response = ExecuteArmRequest(HttpMethod.Get, "resourcegroups/Default-Web-WestUS/providers/Microsoft.Search/searchServices/" + serviceName + "?api-version=2014-07-31-Preview");
-                state = JsonConvert.DeserializeObject<dynamic>(response.Content.ReadAsStringAsync().Result).properties.provisioningState;
-                Console.WriteLine("Service state: {0}", state);
-            } while (state == "provisioning");
-
-            if (state != "succeeded")
+                Console.WriteLine("Please provide values for tenantId, clientId, secret and subscriptionId.");
+            }
+            else
             {
-                throw new Exception("Provisioning operation failed. Service state: " + state);
+                // Build the service credentials using the service principal.
+                var creds = await ApplicationTokenProvider.LoginSilentAsync(tenantId, clientId, clientSecret);
+
+                // Create the various management clients using the credentials instantiated above.
+                var subscriptionClient = new SubscriptionClient(creds);
+                var resourceClient = new ResourceManagementClient(creds);
+                resourceClient.SubscriptionId = subscriptionId;
+                var searchClient = new SearchManagementClient(creds);
+                searchClient.SubscriptionId = subscriptionId;
+
+                // Get some general subscription information, not Azure Search specific
+                var subscription = await subscriptionClient.Subscriptions.GetAsync(subscriptionId);
+                DisplaySubscriptionDetails(subscription);
+
+                // Register the Azure Search resource provider with the subscription. In the Azure Resource Manager model, you need
+                // to register a resource provider in a subscription before you can use it. 
+                // You only need to do this once per subscription/per resource provider.
+                // More details on registering a resource provider here: https://docs.microsoft.com/rest/api/resources/Providers/Register
+                var provider = resourceClient.Providers.Register("Microsoft.Search");
+                DisplayProviderDetails(provider);
+
+                // List all search services in the subscription by resource group.  
+                // More details on listing resources here: https://docs.microsoft.com/rest/api/resources/resources/list
+                var groups = await resourceClient.ResourceGroups.ListAsync();
+
+                Console.WriteLine("----------------------------------------------------");
+                Console.WriteLine("List all search services in the subscription by resource group");
+                Console.WriteLine("----------------------------------------------------");
+
+                foreach (var group in groups)
+                {
+                    var searchServices = await searchClient.Services.ListByResourceGroupAsync(group.Name);
+                    if (searchServices.Count() > 0)
+                        Console.WriteLine("resourceGroup: {0}", group.Name);
+                    {
+                        foreach (var service in searchServices)
+                        {
+                            Console.WriteLine("   service name: {0}, sku: {1}, location: {2}", service.Name, service.Sku.Name, service.Location);
+                        }
+                    }
+                }
+                Console.WriteLine();
+
+                // Create a new search service called "sampleservice#" (where # is a random number, to make it less likely to have collisions)
+                var random = new Random();
+                string newServiceName = "sampleservice" + random.Next(0, 1000000).ToString();
+                string newGroupName = "samplegroup" + random.Next(0, 1000000).ToString();
+                await resourceClient.ResourceGroups.CreateOrUpdateAsync(newGroupName, new ResourceGroup { Location = "West US" });
+
+                // PLEASE NOTE: By default, the code below will create a Standard (S1) search service which is a paid service tier.
+                // You can change this to the free service tier, but if you already have a free service in this subscription the operation will fail.
+                var newService = await searchClient.Services.CreateOrUpdateAsync(newGroupName, newServiceName,
+                    new SearchService()
+                    {
+                        Location = "West US",
+                        Sku = new Sku() { Name = SkuName.Standard }, // use "standard" for standard services
+                        PartitionCount = 1,
+                        ReplicaCount = 1
+                    });
+
+                // Wait for service provisioning to complete
+                while (newService.ProvisioningState == ProvisioningState.Provisioning)
+                {
+                    Thread.Sleep(TimeSpan.FromSeconds(10));
+
+                    // Retrieve service definition by ResourceGroup name and Service Name
+                    newService = await searchClient.Services.GetAsync(newGroupName, newService.Name);
+                }
+
+                // Retrieve service admin API keys
+                AdminKeyResult adminKeys = searchClient.AdminKeys.Get(newGroupName, newService.Name);
+
+                Console.WriteLine("----------------------------------------------------");
+                Console.WriteLine("Service admin API keys");
+                Console.WriteLine("----------------------------------------------------");
+                Console.WriteLine("Primary admin API key: {0}", adminKeys.PrimaryKey);
+                Console.WriteLine("Secondary admin API key: {0}", adminKeys.SecondaryKey);
+                Console.WriteLine();
+
+                // Regenerate admin API keys
+                // (use /primary to regenerate the primary admin API key)
+                AdminKeyResult newPrimary = searchClient.AdminKeys.Regenerate(newGroupName, newService.Name, AdminKeyKind.Primary);
+                AdminKeyResult newSecondary = searchClient.AdminKeys.Regenerate(newGroupName, newService.Name, AdminKeyKind.Secondary);
+
+                Console.WriteLine("----------------------------------------------------");
+                Console.WriteLine("Regenerate admin API keys");
+                Console.WriteLine("----------------------------------------------------");
+                Console.WriteLine("New primary admin API key: {0}", newPrimary.PrimaryKey);
+                Console.WriteLine("New secondary admin API key: {0}", newSecondary.SecondaryKey);
+                Console.WriteLine();
+
+                // Create a new query API key
+                QueryKey newQueryKey = searchClient.QueryKeys.Create(newGroupName, newService.Name, "new query key");
+
+                Console.WriteLine("----------------------------------------------------");
+                Console.WriteLine("Create a new query API key");
+                Console.WriteLine("----------------------------------------------------");
+                Console.WriteLine("New query API key: {0}", newQueryKey.Key);
+                Console.WriteLine();
+
+                // Retrieve query API key
+                searchClient.QueryKeys.Create(newGroupName, newService.Name, "new query key2");
+                QueryKey getQueryKey = (await searchClient.QueryKeys.ListBySearchServiceAsync(newGroupName, newService.Name)).Where(s => s.Name == "new query key2").First();
+
+                Console.WriteLine("----------------------------------------------------");
+                Console.WriteLine("Retrieve query API key");
+                Console.WriteLine("----------------------------------------------------");
+                Console.WriteLine("Retrieved query API key: {0}", getQueryKey.Key);
+                Console.WriteLine();
+
+                // Delete a query API key by name
+                await searchClient.QueryKeys.DeleteAsync(newGroupName, newService.Name, "new query key2");
+
+                Console.WriteLine("----------------------------------------------------");
+                Console.WriteLine("Deleted query API key by name");
+                Console.WriteLine("----------------------------------------------------");
+                Console.WriteLine();
+
+                // NOTE: This operation will fail for the free service tier.
+                if (newService.Sku.Name != SkuName.Free)
+                {
+                    // Scale up service to 2 replicas.  This operation will take several minutes to complete.
+                    newService = searchClient.Services.Update(newGroupName, newService.Name, new SearchService() { ReplicaCount = 2 });
+
+                    // Wait for provisioning to complete
+                    while (newService.ProvisioningState == ProvisioningState.Provisioning)
+                    {
+                        await Task.Delay(TimeSpan.FromSeconds(10));
+
+                        // Retrieve service definition by ResourceGroup name and Service Name
+                        newService = await searchClient.Services.GetAsync(newGroupName, newService.Name);
+                    }
+
+                    Console.WriteLine("----------------------------------------------------");
+                    Console.WriteLine("Scale up service to 2 replicas");
+                    Console.WriteLine("----------------------------------------------------");
+                    Console.WriteLine("Partition Count: {0}", newService.PartitionCount);
+                    Console.WriteLine("Replica Count: {0}", newService.ReplicaCount);
+                    Console.WriteLine();
+
+                    // Scale back down to 1 replica x 1 partition
+                    newService = searchClient.Services.Update(newGroupName, newService.Name, new SearchService() { ReplicaCount = 1, PartitionCount = 1 });
+
+                    // Wait for provisioning to complete
+                    while (newService.ProvisioningState == ProvisioningState.Provisioning)
+                    {
+                        await Task.Delay(TimeSpan.FromSeconds(10));
+
+                        // Retrieve service definition by ResourceGroup name and Service Name
+                        newService = await searchClient.Services.GetAsync(newGroupName, newService.Name);
+                    }
+
+                    Console.WriteLine("----------------------------------------------------");
+                    Console.WriteLine("Scale back down to 1 replica x 1 partition");
+                    Console.WriteLine("----------------------------------------------------");
+                    Console.WriteLine("Partition Count: {0}", newService.PartitionCount);
+                    Console.WriteLine("Replica Count: {0}", newService.ReplicaCount);
+                    Console.WriteLine();
+                }
+
+                // Delete search service
+                await searchClient.Services.DeleteAsync(newGroupName, newService.Name);
+                if (searchClient.Services.ListByResourceGroup(newGroupName).Count() == 0)
+                {
+                    Console.WriteLine("----------------------------------------------------");
+                    Console.WriteLine("Search service successfully deleted");
+                    Console.WriteLine("----------------------------------------------------");
+                    Console.WriteLine();
+                }
             }
         }
 
-        private static void DumpResponse(string title, HttpResponseMessage response)
+        private static void DisplaySubscriptionDetails(Subscription sub)
         {
-            Console.WriteLine(title);
-            Console.WriteLine("Request: {0} {1}", response.RequestMessage.Method, response.RequestMessage.RequestUri);
-            Console.WriteLine("Status: {0}", response.StatusCode);
+            Console.WriteLine("----------------------------------------------------");
+            Console.WriteLine("Subscription Details");
+            Console.WriteLine("----------------------------------------------------");
             Console.WriteLine();
-
-            if (response.Content != null)
-            {
-                // Round-trip this through a JSON serializer to get good formatting
-                string json = JsonConvert.SerializeObject(JsonConvert.DeserializeObject(response.Content.ReadAsStringAsync().Result), Formatting.Indented);
-                Console.WriteLine(json);
-            }
-
+            Console.WriteLine("id: {0}", sub.Id);
+            Console.WriteLine("subscriptionId: {0}", sub.SubscriptionId);
+            Console.WriteLine("displayName: {0}", sub.DisplayName);
+            Console.WriteLine("state: {0}", sub.State);
+            Console.WriteLine("subscriptionPolicies:");
+            Console.WriteLine("   locationPlacementId: {0}", sub.SubscriptionPolicies.LocationPlacementId);
+            Console.WriteLine("   quotaId: {0}", sub.SubscriptionPolicies.QuotaId);
+            Console.WriteLine("   spendingLimit: {0}", sub.SubscriptionPolicies.SpendingLimit);
             Console.WriteLine();
             Console.WriteLine("----------------------------------------------------");
+            Console.WriteLine();
         }
 
-        private static HttpResponseMessage ExecuteArmRequest(HttpMethod httpMethod, string relativeUrl, object requestBody = null)
+        private static void DisplayProviderDetails(Provider provider)
         {
-            Uri baseUrl = new Uri("https://management.azure.com/subscriptions/" + SubscriptionId + "/");
-
-            // We assume this application runs for a short period of time and the obtained token won't expire. Refer
-            // to documentation for how to detect and refresh expired tokens
-            if (_authorizationToken == null)
+            Console.WriteLine("----------------------------------------------------");
+            Console.WriteLine("Azure Search Provider Details");
+            Console.WriteLine("----------------------------------------------------");
+            Console.WriteLine();
+            Console.WriteLine("id: {0}", provider.Id);
+            Console.WriteLine("namespace: {0}", provider.NamespaceProperty);
+            Console.WriteLine("registrationPolicy: {0}", provider.RegistrationPolicy);
+            Console.WriteLine("resourceTypes:");
+            foreach (var rt in provider.ResourceTypes)
             {
-                _authorizationToken = GetAuthorizationHeader();
+                Console.WriteLine("   resourceType: {0}", rt.ResourceType);
+                Console.WriteLine("      locations:");
+                foreach (var loc in rt.Locations) Console.WriteLine("         {0}", loc);
+                Console.WriteLine("      apiVersions:");
+                foreach (var api in rt.ApiVersions) Console.WriteLine("         {0}", api);
             }
-
-            HttpClient client = new HttpClient(); // If you'll make many requests you'll want to reuse this instance
-
-            HttpRequestMessage request = new HttpRequestMessage(httpMethod, new Uri(baseUrl, relativeUrl));
-            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _authorizationToken);
-
-            if (requestBody != null)
-            {
-                request.Content = new StringContent(JsonConvert.SerializeObject(requestBody), Encoding.UTF8, "application/json");
-            }
-
-            HttpResponseMessage response = client.SendAsync(request).Result;
-
-            return response;
-        }
-
-        // This method taken from: http://msdn.microsoft.com/en-us/library/azure/dn790557.aspx
-        private static string GetAuthorizationHeader()
-        {
-            AuthenticationResult result = null;
-
-            var context = new AuthenticationContext("https://login.microsoftonline.com/" + TenantId);
-
-            var thread = new Thread(() =>
-            {
-                result = context.AcquireToken(
-                  "https://management.core.windows.net/",
-                  ClientId,
-                  RedirectUrl,
-                  PromptBehavior.Always);
-            });
-
-            thread.SetApartmentState(ApartmentState.STA);
-            thread.Name = "AquireTokenThread";
-            thread.Start();
-            thread.Join();
-
-            if (result == null)
-            {
-                throw new InvalidOperationException("Failed to obtain the JWT token");
-            }
-
-            string token = result.AccessToken;
-            return token;
+            Console.WriteLine("registrationState: {0}", provider.RegistrationState);
+            Console.WriteLine();
+            Console.WriteLine("----------------------------------------------------");
+            Console.WriteLine();
         }
     }
 }
