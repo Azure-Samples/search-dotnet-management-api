@@ -24,8 +24,8 @@ Contact [Azure Search Contact Us](mailto:azuresearch_contact@microsoft.com) with
 
 ## More information ##
 
-[Azure Search libraries for .NET](https://docs.microsoft.com/en-us/dotnet/api/overview/azure/search?view=azure-dotnet)
-[Azure .Net Developer Center](https://azure.microsoft.com/en-us/develop/net/)
+[Azure Cognitive Search libraries for .NET](https://docs.microsoft.com/en-us/dotnet/api/overview/azure/search?view=azure-dotnet)
+[Azure .NET Developer Center](https://azure.microsoft.com/en-us/develop/net/)
 If you don't have a Microsoft Azure subscription you can get a FREE trial account [here](http://go.microsoft.com/fwlink/?LinkId=330212)
 
 This project has adopted the [Microsoft Open Source Code of Conduct](https://opensource.microsoft.com/codeofconduct/). For more information see the [Code of Conduct FAQ](https://opensource.microsoft.com/codeofconduct/faq/) or contact [opencode@microsoft.com](mailto:opencode@microsoft.com) with any additional questions or comments.
